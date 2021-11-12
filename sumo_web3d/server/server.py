@@ -217,13 +217,13 @@ async def post_state(scenarios, request):
     }))
 
 
-def state_http_response(request):
+async def state_http_response(request):
     return web.Response(
         text=json.dumps(get_state())
     )
 
 
-def vehicle_route_http_response(request):
+async def vehicle_route_http_response(request):
     vehicle_id = request.query_string
     vehicle = last_vehicles.get(vehicle_id)
     if vehicle:
@@ -343,8 +343,8 @@ def start_sumo_executable(gui, sumo_args, sumocfg_file):
     traci.simulation.subscribe()
 
     # Subscribe to all traffic lights. This set of IDs should never change.
-    for light_id in traci.trafficlights.getIDList():
-        traci.trafficlights.subscribe(light_id, [
+    for light_id in traci.trafficlight.getIDList():
+        traci.trafficlight.subscribe(light_id, [
             tc.TL_CURRENT_PHASE,
             tc.TL_CURRENT_PROGRAM
         ])
@@ -485,7 +485,7 @@ def load_scenarios_file(prev_scenarios, scenarios_file):
         return next_scenarios
 
 
-def get_new_scenario(request):
+async def get_new_scenario(request):
     """Set a new scenario and respond with index.html"""
     global current_scenario
     scenario_name = request.match_info['scenario']
@@ -507,6 +507,33 @@ def get_default_scenario_name(scenarios):
     return defaults[0]
 
 
+async def functools_partial_wrapper(scenario_attribute_route, scenario_file, scenarios, additional, other) -> web.Response:
+    functools.partial(scenario_attribute_route, scenario_file, scenarios, additional, other)
+    
+def partial(func, /, *args, **keywords):
+    async def newfunc(*fargs, **fkeywords):
+        newkeywords = {**keywords, **fkeywords}
+        return func(*args, *fargs, **newkeywords)
+    newfunc.func = func
+    newfunc.args = args
+    newfunc.keywords = keywords
+    return newfunc
+
+
+def scenarios_get_response(scenarios_response, request):
+    
+    print(request)
+    print(scenarios_response)
+    return web.Response(
+        text=json.dumps(scenarios_response)
+    )
+    
+    
+def scenarios_get_root(default_scenario_name):
+    return web.HTTPFound('/scenarios/%s/' % default_scenario_name, headers=NO_CACHE_HEADER)
+
+
+
 def setup_http_server(task, scenario_file, scenarios):
     app = web.Application()
 
@@ -515,36 +542,43 @@ def setup_http_server(task, scenario_file, scenarios):
 
     app.router.add_get(
         '/scenarios/{scenario}/additional',
-        functools.partial(scenario_attribute_route, scenario_file, scenarios, 'additional', None)
+        partial(scenario_attribute_route, scenario_file, scenarios, 'additional', None)
     )
     app.router.add_get(
         '/scenarios/{scenario}/network',
-        functools.partial(scenario_attribute_route, scenario_file, scenarios, 'network', None)
+        partial(scenario_attribute_route, scenario_file, scenarios, 'network', None)
     )
     app.router.add_get(
         '/scenarios/{scenario}/water',
-        functools.partial(scenario_attribute_route, scenario_file, scenarios, 'water', None)
+        partial(scenario_attribute_route, scenario_file, scenarios, 'water', None)
     )
     app.router.add_get(
         '/scenarios/{scenario}/settings',
-        functools.partial(
+        partial(
             scenario_attribute_route, scenario_file, scenarios, 'settings', 'viewsettings')
     )
     app.router.add_get('/scenarios/{scenario}/', get_new_scenario)
 
     app.router.add_get(
         '/scenarios',
-        lambda request: web.Response(text=json.dumps(scenarios_response))
+        #lambda request: web.Response(text=json.dumps(scenarios_response))
+        partial(scenarios_get_response, scenarios_response)
     )
     app.router.add_get(
         '/poly-convert',
-        make_xml_endpoint(os.path.join(constants.SUMO_HOME, 'data/typemap/osmPolyconvert.typ.xml'))
+        make_xml_endpoint(os.path.join(constants.SUMO_HOME, 'share/sumo/data/typemap/osmPolyconvert.typ.xml'))
     )
     app.router.add_get('/state', state_http_response)
-    app.router.add_post('/state', functools.partial(post_state, scenarios))
+    app.router.add_post('/state', partial(post_state, scenarios))
     app.router.add_get('/vehicle_route', vehicle_route_http_response)
-    app.router.add_get('/', lambda req: web.HTTPFound(
-        '/scenarios/%s/' % default_scenario_name, headers=NO_CACHE_HEADER))
+    
+    #app.router.add_get('/', lambda req: web.HTTPFound(
+    #    '/scenarios/%s/' % default_scenario_name, headers=NO_CACHE_HEADER))
+    
+    print("default_scenario_name: "+str(default_scenario_name))
+    
+    app.router.add_get('/', partial(scenarios_get_root(default_scenario_name)))
+    
     app.router.add_static('/', path=os.path.join(DIR, 'static'))
 
     return app
